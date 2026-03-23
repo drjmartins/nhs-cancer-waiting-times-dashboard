@@ -687,16 +687,30 @@ detail["Month"] = pd.Categorical(detail["Month"], categories=MONTH_ORDER, ordere
 detail = detail.sort_values(["Month", "Route"]).reset_index(drop=True)
 detail["Month"] = detail["Month"].astype(str)
 
-def highlight_below_target(row):
+st.markdown(
+    "<span style='display:inline-block;width:12px;height:12px;"
+    f"background:#fde8e8;border:1px solid #ccc;margin-right:6px;vertical-align:middle;'></span>"
+    "<span style='font-size:0.82rem;vertical-align:middle;'>Below 75% target</span>"
+    "&nbsp;&nbsp;&nbsp;"
+    "<span style='display:inline-block;width:12px;height:12px;"
+    "background:white;border:1px solid #ccc;margin-right:6px;vertical-align:middle;'></span>"
+    "<span style='font-size:0.82rem;vertical-align:middle;'>Meets or exceeds 75% target</span>"
+    "&nbsp;&nbsp;&nbsp;"
+    "<span style='font-size:0.82rem;vertical-align:middle;'><b>Bold</b> = Combined (all routes)</span>",
+    unsafe_allow_html=True,
+)
+
+def style_detail(row):
     try:
         val = float(row["% within 28d"].replace("%", "")) / 100
-        color = "#fde8e8" if val < FDS_TARGET else ""
+        bg = "background-color: #fde8e8" if val < FDS_TARGET else "background-color: white"
     except Exception:
-        color = ""
-    return [f"background-color: {color}"] * len(row)
+        bg = ""
+    weight = "font-weight: bold" if row["Route"] == "Combined" else "font-weight: normal"
+    return [f"{bg}; {weight}"] * len(row)
 
 st.dataframe(
-    detail.style.apply(highlight_below_target, axis=1),
+    detail.style.apply(style_detail, axis=1),
     use_container_width=True,
     hide_index=True,
 )
