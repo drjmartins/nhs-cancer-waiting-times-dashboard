@@ -426,13 +426,27 @@ df_hist = (
 )
 
 with hist_col:
+    # Pre-compute bins with exact 5% boundaries
+    import numpy as np
+    bin_edges = np.arange(0, 1.051, 0.05)
+    bin_labels = [f"{bin_edges[i]:.0%}–{bin_edges[i+1]:.0%}" for i in range(len(bin_edges) - 1)]
+    counts = (
+        pd.cut(df_hist["pct_28"], bins=bin_edges, include_lowest=True, right=False, labels=False)
+        .value_counts()
+        .reindex(range(len(bin_edges) - 1), fill_value=0)
+        .sort_index()
+    )
+    bin_centers = (bin_edges[:-1] + bin_edges[1:]) / 2
+
     fig_hist = go.Figure()
-    fig_hist.add_trace(go.Histogram(
-        x=df_hist["pct_28"],
-        xbins=dict(start=0, end=1, size=0.05),
+    fig_hist.add_trace(go.Bar(
+        x=bin_centers,
+        y=counts.values,
+        width=0.048,
         marker_color=C_BLUE,
         marker_line=dict(color="white", width=1),
-        hovertemplate="% within 28 days: %{x:.0%}–%{x:.0%}<br>Organisations: %{y}<extra></extra>",
+        customdata=bin_labels,
+        hovertemplate="%{customdata}<br>Organisations: %{y}<extra></extra>",
     ))
     fig_hist.add_vline(
         x=FDS_TARGET,
