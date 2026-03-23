@@ -97,7 +97,7 @@ st.markdown(f"""
 
 
 # ── DATA LOADING ──────────────────────────────────────────────────────────────
-DATA_DIR = Path(__file__).parent
+DATA_DIR = Path(__file__).parent / "NHS data"
 
 
 @st.cache_data(show_spinner="Loading NHS Cancer Waiting Times data…")
