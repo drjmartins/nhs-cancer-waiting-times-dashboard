@@ -100,6 +100,18 @@ st.markdown(f"""
 DATA_DIR = Path(__file__).parent / "NHS data"
 
 
+def _org_sort_key(name: str):
+    n = name.upper()
+    if "INTEGRATED CARE BOARD" in n:
+        return (0, name)
+    elif "NATIONAL COMMISSIONING HUB" in n:
+        return (1, name)
+    elif "H&J COMMISSIONING HUB" in n:
+        return (2, name)
+    else:
+        return (3, name)
+
+
 def _data_fingerprint() -> str:
     """Hash of all xlsx filenames — changes whenever files are added or removed."""
     import hashlib
@@ -523,7 +535,7 @@ ROUTE_STYLES = {
 
 col_orgs, col_routes = st.columns([3, 1])
 with col_orgs:
-    all_orgs = sorted(df_agg["org_name"].dropna().unique())
+    all_orgs = sorted(df_agg["org_name"].dropna().unique(), key=_org_sort_key)
     selected_orgs = st.multiselect(
         f"Select {org_label.lower()}s to compare",
         options=all_orgs,
@@ -614,7 +626,7 @@ st.plotly_chart(fig_drill, use_container_width=True)
 st.divider()
 
 # ── INDIVIDUAL PROVIDER / COMMISSIONER ANALYSIS ───────────────────────────────
-all_orgs_individual = sorted(df_agg["org_name"].dropna().unique())
+all_orgs_individual = sorted(df_agg["org_name"].dropna().unique(), key=_org_sort_key)
 sel_col, month_col = st.columns([3, 1])
 
 with sel_col:
