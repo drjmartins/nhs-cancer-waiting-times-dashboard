@@ -466,12 +466,18 @@ with hist_col:
     )
     bin_centers = (bin_edges[:-1] + bin_edges[1:]) / 2
 
+    hist_colour = {
+        "Combined": C_BLUE,
+        "Urgent Suspected Cancer": C_DARK_BLUE,
+        "National Screening Programme": C_LIGHT_BLUE,
+    }[hist_route]
+
     fig_hist = go.Figure()
     fig_hist.add_trace(go.Bar(
         x=bin_centers,
         y=counts.values,
         width=0.048,
-        marker_color=C_BLUE,
+        marker_color=hist_colour,
         marker_line=dict(color="white", width=1),
         customdata=bin_labels,
         hovertemplate="%{customdata}<br>Organisations: %{y}<extra></extra>",
