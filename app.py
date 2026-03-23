@@ -394,14 +394,6 @@ with right:
     st.plotly_chart(fig_vol, use_container_width=True)
 
 
-selected_month = str(latest_month)
-df_sel = (
-    df_agg[df_agg["month"].astype(str) == selected_month]
-    .dropna(subset=["pct_28", "total"])
-    .query("total > 0")
-    .copy()
-)
-df_sel = df_sel.sort_values("pct_28", ascending=True)
 
 
 # ── PROVIDER TREND DRILL-DOWN ─────────────────────────────────────────────────
@@ -516,6 +508,23 @@ st.plotly_chart(fig_drill, use_container_width=True)
 
 # ── WAITING TIME BREAKDOWN ─────────────────────────────────────────────────────
 st.divider()
+
+month_options = [m for m in MONTH_ORDER if m in df_agg["month"].astype(str).values]
+selected_month = st.select_slider(
+    "Select month",
+    options=month_options,
+    value=month_options[-1],
+    key="breakdown_month_slider",
+)
+
+df_sel = (
+    df_agg[df_agg["month"].astype(str) == selected_month]
+    .dropna(subset=["pct_28", "total"])
+    .query("total > 0")
+    .copy()
+)
+df_sel = df_sel.sort_values("pct_28", ascending=True)
+
 st.markdown(f"#### Waiting Time Breakdown — {selected_month} ({view})")
 st.caption(
     "Stacked bars show how long patients waited. "
