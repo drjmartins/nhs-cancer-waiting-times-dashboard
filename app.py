@@ -1,0 +1,621 @@
+"""
+NHS England — 28-Day Faster Diagnosis Standard Dashboard
+Colorectal Cancer (Suspected Lower Gastrointestinal)
+Oct 2024 – Sep 2025
+"""
+
+import streamlit as st
+import pandas as pd
+import plotly.express as px
+import plotly.graph_objects as go
+from pathlib import Path
+
+# ── PAGE CONFIG ───────────────────────────────────────────────────────────────
+st.set_page_config(
+    page_title="NHS CRC 28-Day FDS Dashboard",
+    page_icon="🏥",
+    layout="wide",
+    initial_sidebar_state="expanded",
+)
+
+# ── COLOURS ───────────────────────────────────────────────────────────────────
+C_DARK_BLUE  = "#003087"
+C_BLUE       = "#005EB8"
+C_LIGHT_BLUE = "#41B6E6"
+C_GREEN      = "#009639"
+C_RED        = "#DA291C"
+C_YELLOW     = "#FFB81C"
+C_GREY       = "#425563"
+C_LIGHT_GREY = "#E8EDEE"
+
+FDS_TARGET   = 0.75
+
+MONTH_ORDER = [
+    "Oct-24", "Nov-24", "Dec-24",
+    "Jan-25", "Feb-25", "Mar-25",
+    "Apr-25", "May-25", "Jun-25",
+    "Jul-25", "Aug-25", "Sep-25",
+]
+
+# ── CUSTOM CSS ────────────────────────────────────────────────────────────────
+st.markdown(f"""
+<style>
+  /* Page padding */
+  .block-container {{ padding-top: 1rem; padding-bottom: 2rem; }}
+
+  /* KPI cards */
+  .kpi-card {{
+    background: {C_BLUE};
+    color: white;
+    border-radius: 8px;
+    padding: 1rem 1.25rem;
+    min-height: 110px;
+  }}
+  .kpi-card .kpi-label {{
+    font-size: 0.75rem;
+    letter-spacing: 0.6px;
+    text-transform: uppercase;
+    opacity: 0.85;
+    margin-bottom: 0.4rem;
+  }}
+  .kpi-card .kpi-value {{
+    font-size: 2rem;
+    font-weight: 700;
+    line-height: 1.1;
+  }}
+  .kpi-card .kpi-delta {{
+    font-size: 0.8rem;
+    margin-top: 0.4rem;
+  }}
+
+  /* Page header */
+  .nhs-header {{
+    background: linear-gradient(135deg, {C_DARK_BLUE} 0%, {C_BLUE} 100%);
+    color: white;
+    padding: 1.25rem 1.75rem;
+    border-radius: 10px;
+    margin-bottom: 1.5rem;
+  }}
+
+  /* Sidebar */
+  div[data-testid="stSidebar"] > div:first-child {{
+    background: {C_DARK_BLUE};
+  }}
+  div[data-testid="stSidebar"] label,
+  div[data-testid="stSidebar"] p,
+  div[data-testid="stSidebar"] span,
+  div[data-testid="stSidebar"] div,
+  div[data-testid="stSidebar"] h1,
+  div[data-testid="stSidebar"] h2,
+  div[data-testid="stSidebar"] h3 {{
+    color: white !important;
+  }}
+
+  /* Section headers */
+  h4 {{ color: {C_DARK_BLUE}; }}
+</style>
+""", unsafe_allow_html=True)
+
+
+# ── DATA LOADING ──────────────────────────────────────────────────────────────
+DATA_DIR = Path(__file__).parent
+
+
+@st.cache_data(show_spinner="Loading NHS Cancer Waiting Times data…")
+def load_data() -> pd.DataFrame:
+    """Parse all Excel workbooks and return a combined CRC FDS dataframe."""
+    records = []
+
+    for fp in sorted(DATA_DIR.glob("*.xlsx")):
+        stem = fp.stem.upper()
+        if "COMMISSIONER" in stem:
+            vtype = "Commissioner"
+        elif "PROVIDER" in stem:
+            vtype = "Provider"
+        else:
+            continue
+
+        try:
+            raw = pd.read_excel(
+                fp,
+                sheet_name="28-DAY FDS (BY ROUTE)",
+                header=None,
+                engine="openpyxl",
+            )
+        except Exception:
+            continue
+
+        month = str(raw.iloc[1, 0]).strip()   # e.g. "Oct-24"
+        rows = raw.iloc[9:].reset_index(drop=True)
+        rows.columns = range(rows.shape[1])
+
+        # Column layout (0-indexed):
+        # 0=blank  1=ODS  2=org_name  3=referral_route  4=cancer_type
+        # 5=total  6=within_28  7=after_28  8=pct_28  9=separator
+        # 10=w14  11=d15_28  12=d29_42  13=d43_62  14=d63plus
+
+        # Filter to colorectal cancer only
+        crc = rows[rows[4] == "Suspected lower gastrointestinal cancer"].copy()
+
+        # Drop blank / national-total rows
+        crc = crc[crc[1].notna()]
+        crc = crc[
+            ~crc[2]
+            .astype(str)
+            .str.contains(r"ALL ENGLISH|NATIONAL TOTAL", na=False, regex=True, case=False)
+        ]
+
+        def n(r, col):
+            return pd.to_numeric(r[col], errors="coerce") if col < len(r) else float("nan")
+
+        for _, r in crc.iterrows():
+            records.append(
+                dict(
+                    month=month,
+                    view_type=vtype,
+                    ods_code=str(r[1]).strip(),
+                    org_name=str(r[2]).strip(),
+                    referral_route=str(r[3]).strip(),
+                    total=n(r, 5),
+                    within_28=n(r, 6),
+                    after_28=n(r, 7),
+                    pct_28=n(r, 8),
+                    w14=n(r, 10),
+                    d15_28=n(r, 11),
+                    d29_42=n(r, 12),
+                    d43_62=n(r, 13),
+                    d63plus=n(r, 14),
+                )
+            )
+
+    df = pd.DataFrame(records)
+    if df.empty:
+        return df
+
+    df["month"] = pd.Categorical(df["month"], categories=MONTH_ORDER, ordered=True)
+    return df.sort_values("month").reset_index(drop=True)
+
+
+# ── SIDEBAR ───────────────────────────────────────────────────────────────────
+with st.sidebar:
+    st.markdown(
+        f"<div style='font-size:1.6rem;font-weight:700;color:white;letter-spacing:1px;'>"
+        f"NHS England</div>",
+        unsafe_allow_html=True,
+    )
+    st.markdown(
+        "<div style='color:#41B6E6;font-size:0.9rem;margin-bottom:1rem;'>"
+        "28-Day FDS Dashboard</div>",
+        unsafe_allow_html=True,
+    )
+    st.divider()
+
+    view = st.radio(
+        "Perspective",
+        options=["Provider", "Commissioner"],
+        index=0,
+        help="Switch between NHS Trust (Provider) and ICB (Commissioner) views.",
+    )
+
+    st.divider()
+    st.markdown(
+        "<div style='font-size:0.8rem;opacity:0.85;line-height:1.6;'>"
+        "<b>Cancer type:</b> Colorectal (Lower GI)<br>"
+        "<b>Data:</b> NHS England CWT<br>"
+        "<b>Period:</b> Oct 2024 – Sep 2025<br>"
+        "<b>Target:</b> ≥ 75% within 28 days"
+        "</div>",
+        unsafe_allow_html=True,
+    )
+
+
+# ── LOAD DATA ─────────────────────────────────────────────────────────────────
+df_all = load_data()
+
+if df_all.empty:
+    st.error(
+        "No data could be loaded. "
+        "Make sure the NHS Excel files are in the same folder as app.py."
+    )
+    st.stop()
+
+df = df_all[df_all["view_type"] == view].copy()
+org_label = "Provider" if view == "Provider" else "ICB / Commissioning Hub"
+
+# ── HEADER ────────────────────────────────────────────────────────────────────
+st.markdown(
+    f"""
+    <div class="nhs-header">
+      <div style="font-size:1.5rem;font-weight:700;">
+        NHS England &nbsp;—&nbsp; 28-Day Faster Diagnosis Standard
+      </div>
+      <div style="opacity:0.85;margin-top:0.3rem;">
+        Colorectal Cancer (Suspected Lower Gastrointestinal) &nbsp;·&nbsp;
+        {view} View &nbsp;·&nbsp; Oct 2024 – Sep 2025
+      </div>
+    </div>
+    """,
+    unsafe_allow_html=True,
+)
+
+
+# ── NATIONAL AGGREGATES PER MONTH ─────────────────────────────────────────────
+nat = (
+    df.groupby("month", observed=True)
+    .agg(total=("total", "sum"), within_28=("within_28", "sum"))
+    .reset_index()
+)
+nat["pct_28"] = nat["within_28"] / nat["total"]
+
+latest_month = nat["month"].max()
+latest_row   = nat[nat["month"] == latest_month].iloc[0]
+
+prev_months  = nat[nat["month"] < latest_month]
+prev_row     = prev_months.iloc[-1] if not prev_months.empty else None
+
+latest_pct   = latest_row["pct_28"]
+latest_total = int(latest_row["total"])
+latest_w28   = int(latest_row["within_28"])
+delta_pct    = (latest_pct - prev_row["pct_28"]) if prev_row is not None else None
+
+df_latest    = df[df["month"] == latest_month]
+n_orgs       = df_latest["org_name"].nunique()
+n_meeting    = df_latest[df_latest["pct_28"] >= FDS_TARGET]["org_name"].nunique()
+
+
+# ── HELPER: KPI CARD ──────────────────────────────────────────────────────────
+def kpi_card(label: str, value: str, delta: float | None = None, good_up: bool = True):
+    delta_html = ""
+    if delta is not None:
+        good  = (delta >= 0 and good_up) or (delta < 0 and not good_up)
+        color = C_GREEN if good else C_RED
+        arrow = "▲" if delta >= 0 else "▼"
+        delta_html = (
+            f'<div class="kpi-delta" style="color:{color};">'
+            f'{arrow} {abs(delta):.1%} vs prior month</div>'
+        )
+    return (
+        f'<div class="kpi-card">'
+        f'  <div class="kpi-label">{label}</div>'
+        f'  <div class="kpi-value">{value}</div>'
+        f'  {delta_html}'
+        f'</div>'
+    )
+
+
+# ── KPI ROW ───────────────────────────────────────────────────────────────────
+c1, c2, c3, c4 = st.columns(4)
+c1.markdown(
+    kpi_card(f"28-Day FDS %  ({latest_month})", f"{latest_pct:.1%}", delta_pct),
+    unsafe_allow_html=True,
+)
+c2.markdown(
+    kpi_card(f"Patients seen  ({latest_month})", f"{latest_total:,}"),
+    unsafe_allow_html=True,
+)
+c3.markdown(
+    kpi_card(f"Within 28 days  ({latest_month})", f"{latest_w28:,}"),
+    unsafe_allow_html=True,
+)
+c4.markdown(
+    kpi_card(f"Meeting 75% target  ({latest_month})", f"{n_meeting} / {n_orgs}"),
+    unsafe_allow_html=True,
+)
+
+st.markdown("<br>", unsafe_allow_html=True)
+
+
+# ── TREND + VOLUME ────────────────────────────────────────────────────────────
+left, right = st.columns([3, 2])
+
+with left:
+    st.markdown(f"#### National Trend — CRC 28-Day FDS % ({view}-based)")
+
+    fig_trend = go.Figure()
+    fig_trend.add_trace(
+        go.Scatter(
+            x=nat["month"].astype(str),
+            y=nat["pct_28"],
+            mode="lines+markers",
+            name="28-Day FDS %",
+            line=dict(color=C_BLUE, width=3),
+            marker=dict(size=9, color=C_BLUE, line=dict(color="white", width=2)),
+            hovertemplate="<b>%{x}</b><br>%{y:.1%} within 28 days<extra></extra>",
+        )
+    )
+    fig_trend.add_hline(
+        y=FDS_TARGET,
+        line_dash="dash",
+        line_color=C_RED,
+        line_width=2,
+        annotation_text="75% Target",
+        annotation_position="top left",
+        annotation_font_color=C_RED,
+        annotation_font_size=12,
+    )
+    fig_trend.update_layout(
+        height=300,
+        plot_bgcolor="white",
+        paper_bgcolor="white",
+        margin=dict(l=10, r=20, t=10, b=10),
+        yaxis=dict(
+            tickformat=".0%",
+            range=[0.4, 1.0],
+            gridcolor=C_LIGHT_GREY,
+            title=None,
+        ),
+        xaxis=dict(gridcolor=C_LIGHT_GREY, title=None),
+        showlegend=False,
+    )
+    st.plotly_chart(fig_trend, use_container_width=True)
+
+with right:
+    st.markdown("#### Monthly Patient Volume")
+
+    fig_vol = go.Figure()
+    fig_vol.add_trace(
+        go.Bar(
+            x=nat["month"].astype(str),
+            y=nat["total"],
+            name="Total referrals",
+            marker_color=C_LIGHT_GREY,
+            hovertemplate="<b>%{x}</b><br>Total: %{y:,}<extra></extra>",
+        )
+    )
+    fig_vol.add_trace(
+        go.Bar(
+            x=nat["month"].astype(str),
+            y=nat["within_28"],
+            name="Within 28 days",
+            marker_color=C_BLUE,
+            hovertemplate="<b>%{x}</b><br>Within 28 days: %{y:,}<extra></extra>",
+        )
+    )
+    fig_vol.update_layout(
+        height=300,
+        barmode="overlay",
+        plot_bgcolor="white",
+        paper_bgcolor="white",
+        margin=dict(l=10, r=10, t=10, b=10),
+        yaxis=dict(gridcolor=C_LIGHT_GREY, title=None),
+        xaxis=dict(title=None),
+        legend=dict(orientation="h", y=-0.25, font=dict(size=11)),
+    )
+    st.plotly_chart(fig_vol, use_container_width=True)
+
+
+# ── PERFORMANCE LEAGUE TABLE (BAR CHART) ──────────────────────────────────────
+st.divider()
+st.markdown(f"#### {org_label} Performance — CRC 28-Day FDS")
+
+month_options = [m for m in MONTH_ORDER if m in df["month"].astype(str).values]
+selected_month = st.select_slider(
+    "Select month",
+    options=month_options,
+    value=month_options[-1],
+    key="month_slider",
+)
+
+df_sel = (
+    df[df["month"].astype(str) == selected_month]
+    .dropna(subset=["pct_28", "total"])
+    .query("total > 0")
+    .copy()
+)
+df_sel = df_sel.sort_values("pct_28", ascending=True)
+df_sel["meets_target"] = df_sel["pct_28"].apply(
+    lambda x: "Meets target (≥75%)" if x >= FDS_TARGET else "Below target (<75%)"
+)
+
+fig_league = px.bar(
+    df_sel,
+    x="pct_28",
+    y="org_name",
+    orientation="h",
+    color="meets_target",
+    color_discrete_map={
+        "Meets target (≥75%)": C_GREEN,
+        "Below target (<75%)": C_RED,
+    },
+    custom_data=["total", "within_28", "after_28"],
+    labels={
+        "pct_28": "% within 28 days",
+        "org_name": org_label,
+        "meets_target": "",
+    },
+    height=max(500, len(df_sel) * 22),
+)
+fig_league.update_traces(
+    hovertemplate=(
+        "<b>%{y}</b><br>"
+        "%{x:.1%} within 28 days<br>"
+        "Total: %{customdata[0]:,}<br>"
+        "Within 28d: %{customdata[1]:,}<br>"
+        "After 28d: %{customdata[2]:,}"
+        "<extra></extra>"
+    )
+)
+fig_league.add_vline(
+    x=FDS_TARGET,
+    line_dash="dash",
+    line_color=C_RED,
+    line_width=2,
+    annotation_text="75% Target",
+    annotation_position="top right",
+    annotation_font_color=C_RED,
+)
+fig_league.update_layout(
+    plot_bgcolor="white",
+    paper_bgcolor="white",
+    margin=dict(l=10, r=20, t=10, b=10),
+    xaxis=dict(tickformat=".0%", range=[0, 1.05], gridcolor=C_LIGHT_GREY, title=None),
+    yaxis=dict(tickfont=dict(size=10), title=None),
+    legend=dict(orientation="h", y=-0.03, font=dict(size=11)),
+)
+st.plotly_chart(fig_league, use_container_width=True)
+
+
+# ── PROVIDER TREND DRILL-DOWN ─────────────────────────────────────────────────
+st.divider()
+st.markdown(f"#### {org_label} Trend Over Time")
+
+all_orgs = sorted(df["org_name"].dropna().unique())
+
+# Pre-select a handful to keep the chart readable
+default_orgs = all_orgs[:5] if len(all_orgs) >= 5 else all_orgs
+
+selected_orgs = st.multiselect(
+    f"Select {org_label.lower()}s to compare",
+    options=all_orgs,
+    default=default_orgs,
+    help="Choose one or more organisations to plot their 28-day FDS % over time.",
+)
+
+if selected_orgs:
+    df_drill = df[df["org_name"].isin(selected_orgs)].copy()
+
+    fig_drill = go.Figure()
+    for org in selected_orgs:
+        org_data = df_drill[df_drill["org_name"] == org].sort_values("month")
+        if org_data.empty:
+            continue
+        fig_drill.add_trace(
+            go.Scatter(
+                x=org_data["month"].astype(str),
+                y=org_data["pct_28"],
+                mode="lines+markers",
+                name=org,
+                hovertemplate=f"<b>{org}</b><br>%{{x}}: %{{y:.1%}}<extra></extra>",
+            )
+        )
+    fig_drill.add_hline(
+        y=FDS_TARGET,
+        line_dash="dash",
+        line_color=C_RED,
+        line_width=2,
+        annotation_text="75% Target",
+        annotation_position="top left",
+        annotation_font_color=C_RED,
+    )
+    fig_drill.update_layout(
+        height=380,
+        plot_bgcolor="white",
+        paper_bgcolor="white",
+        margin=dict(l=10, r=20, t=10, b=10),
+        yaxis=dict(tickformat=".0%", range=[0, 1.05], gridcolor=C_LIGHT_GREY, title=None),
+        xaxis=dict(gridcolor=C_LIGHT_GREY, title=None),
+        legend=dict(orientation="h", y=-0.2, font=dict(size=10)),
+    )
+    st.plotly_chart(fig_drill, use_container_width=True)
+else:
+    st.info("Select at least one organisation above to display trends.")
+
+
+# ── WAITING TIME BREAKDOWN ─────────────────────────────────────────────────────
+st.divider()
+st.markdown(f"#### Waiting Time Breakdown — {selected_month} ({view})")
+st.caption(
+    "Stacked bars show how long patients waited. "
+    "Within 14 days and 15–28 days (blue shades) both contribute to meeting the 28-day target."
+)
+
+df_breakdown = (
+    df_sel.dropna(subset=["w14", "d15_28", "d29_42", "d43_62", "d63plus"], how="all")
+    .sort_values("total", ascending=False)
+)
+
+breakdown_bands = {
+    "≤ 14 days":   ("w14",    C_DARK_BLUE),
+    "15–28 days":  ("d15_28", C_BLUE),
+    "29–42 days":  ("d29_42", C_YELLOW),
+    "43–62 days":  ("d43_62", "#FF6B35"),
+    "> 62 days":   ("d63plus", C_RED),
+}
+
+fig_bd = go.Figure()
+for label, (col, color) in breakdown_bands.items():
+    if col in df_breakdown.columns:
+        fig_bd.add_trace(
+            go.Bar(
+                name=label,
+                x=df_breakdown["org_name"],
+                y=df_breakdown[col],
+                marker_color=color,
+                hovertemplate=f"<b>%{{x}}</b><br>{label}: %{{y:,}}<extra></extra>",
+            )
+        )
+
+fig_bd.update_layout(
+    barmode="stack",
+    height=420,
+    plot_bgcolor="white",
+    paper_bgcolor="white",
+    margin=dict(l=10, r=10, t=10, b=140),
+    xaxis=dict(tickangle=-50, tickfont=dict(size=9), title=None),
+    yaxis=dict(title="Patients", gridcolor=C_LIGHT_GREY),
+    legend=dict(
+        orientation="h",
+        y=1.06,
+        font=dict(size=11),
+        traceorder="normal",
+    ),
+)
+st.plotly_chart(fig_bd, use_container_width=True)
+
+
+# ── DATA TABLE ────────────────────────────────────────────────────────────────
+st.divider()
+st.markdown(f"#### Full Data Table — {selected_month} ({view})")
+
+table = df_sel[
+    ["ods_code", "org_name", "total", "within_28", "after_28",
+     "pct_28", "w14", "d15_28", "d29_42", "d43_62", "d63plus"]
+].copy()
+
+table.columns = [
+    "ODS Code", org_label, "Total", "Within 28d", "After 28d",
+    "% within 28d", "≤14d", "15–28d", "29–42d", "43–62d", ">62d",
+]
+table = table.sort_values("% within 28d", ascending=False).reset_index(drop=True)
+table["% within 28d"] = table["% within 28d"].apply(
+    lambda x: f"{x:.1%}" if pd.notna(x) else "—"
+)
+
+# Highlight rows below target (light red background)
+def highlight_below_target(row):
+    pct_str = row["% within 28d"]
+    try:
+        val = float(pct_str.replace("%", "")) / 100
+        color = "#fde8e8" if val < FDS_TARGET else ""
+    except Exception:
+        color = ""
+    return [f"background-color: {color}"] * len(row)
+
+st.dataframe(
+    table.style.apply(highlight_below_target, axis=1),
+    use_container_width=True,
+    hide_index=True,
+)
+
+csv_bytes = table.to_csv(index=False).encode("utf-8")
+st.download_button(
+    label="⬇  Download table as CSV",
+    data=csv_bytes,
+    file_name=f"NHS_CRC_28day_FDS_{view}_{selected_month}.csv",
+    mime="text/csv",
+)
+
+
+# ── FOOTER ────────────────────────────────────────────────────────────────────
+st.divider()
+st.markdown(
+    f"<p style='color:{C_GREY};font-size:0.78rem;line-height:1.6;'>"
+    "Data source: NHS England Cancer Waiting Times (publicly available). "
+    "Covers <em>Suspected Lower Gastrointestinal Cancer</em> referrals only. "
+    "The 28-day Faster Diagnosis Standard (FDS) measures the proportion of patients who "
+    "receive a definitive cancer diagnosis or exclusion within 28 days of urgent referral. "
+    "National target: ≥ 75%. "
+    "Figures are based on patients told of their outcome in the reporting month."
+    "</p>",
+    unsafe_allow_html=True,
+)

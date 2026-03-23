@@ -1,0 +1,13 @@
+# Python
+__pycache__/
+*.py[cod]
+.env
+
+# macOS
+.DS_Store
+
+# Streamlit cache
+.streamlit/secrets.toml
+
+# Local instructions
+Instructions.rtf
