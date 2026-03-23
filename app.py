@@ -696,24 +696,40 @@ detail["Month"] = pd.Categorical(detail["Month"], categories=MONTH_ORDER, ordere
 detail = detail.sort_values(["Month", "Route"]).reset_index(drop=True)
 detail["Month"] = detail["Month"].astype(str)
 
+def swatch(color, border="#ccc"):
+    return (
+        f"<span style='display:inline-block;width:12px;height:12px;"
+        f"background:{color};border:1px solid {border};"
+        f"margin-right:6px;vertical-align:middle;'></span>"
+    )
+
 st.markdown(
-    "<span style='display:inline-block;width:12px;height:12px;"
-    f"background:#fde8e8;border:1px solid #ccc;margin-right:6px;vertical-align:middle;'></span>"
+    swatch("#fde8e8") +
     "<span style='font-size:0.82rem;vertical-align:middle;'>Below 75% target</span>"
-    "&nbsp;&nbsp;&nbsp;"
-    "<span style='display:inline-block;width:12px;height:12px;"
-    "background:white;border:1px solid #ccc;margin-right:6px;vertical-align:middle;'></span>"
+    "&nbsp;&nbsp;&nbsp;" +
+    swatch("#e6f4ec") +
     "<span style='font-size:0.82rem;vertical-align:middle;'>Meets or exceeds 75% target</span>"
+    "&nbsp;&nbsp;&nbsp;" +
+    swatch("#f0f0f0") +
+    "<span style='font-size:0.82rem;vertical-align:middle;'>No data</span>"
     "&nbsp;&nbsp;&nbsp;"
     "<span style='font-size:0.82rem;vertical-align:middle;'><b>Bold</b> = Combined (all routes)</span>",
     unsafe_allow_html=True,
 )
 
 def style_detail(row):
+    no_data = row["Total"] == 0
     try:
         val = float(row["% within 28d"].replace("%", "")) / 100
-        bg = "background-color: #fde8e8" if val < FDS_TARGET else "background-color: white"
     except Exception:
+        val = None
+    if no_data:
+        bg = "background-color: #f0f0f0"
+    elif val is not None and val >= FDS_TARGET:
+        bg = "background-color: #e6f4ec"
+    elif val is not None and val < FDS_TARGET:
+        bg = "background-color: #fde8e8"
+    else:
         bg = ""
     weight = "font-weight: bold" if row["Route"] == "Combined" else "font-weight: normal"
     return [f"{bg}; {weight}"] * len(row)
