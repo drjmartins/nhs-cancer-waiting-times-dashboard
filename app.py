@@ -78,6 +78,10 @@ st.markdown(f"""
   }}
 
   /* Sidebar */
+  div[data-testid="stSidebar"] {{
+    min-width: 220px !important;
+    max-width: 220px !important;
+  }}
   div[data-testid="stSidebar"] > div:first-child {{
     background: {C_DARK_BLUE};
   }}
