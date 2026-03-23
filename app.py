@@ -172,16 +172,6 @@ def load_data() -> pd.DataFrame:
     if df.empty:
         return df
 
-    # Aggregate across referral routes (Urgent Suspected Cancer + National Screening Programme)
-    # so each organisation has one row per month
-    count_cols = ["total", "within_28", "after_28", "w14", "d15_28", "d29_42", "d43_62", "d63plus"]
-    df = (
-        df.groupby(["month", "view_type", "ods_code", "org_name"], observed=True)[count_cols]
-        .sum()
-        .reset_index()
-    )
-    df["pct_28"] = df["within_28"] / df["total"]
-
     df["month"] = pd.Categorical(df["month"], categories=MONTH_ORDER, ordered=True)
     return df.sort_values("month").reset_index(drop=True)
 
@@ -229,8 +219,18 @@ if df_all.empty:
     )
     st.stop()
 
-df = df_all[df_all["view_type"] == view].copy()
+df = df_all[df_all["view_type"] == view].copy()   # raw: one row per org per route per month
 org_label = "Provider" if view == "Provider" else "ICB / Commissioning Hub"
+
+# Aggregated across routes — used for KPIs, national trend, breakdown, and table
+_count_cols = ["total", "within_28", "after_28", "w14", "d15_28", "d29_42", "d43_62", "d63plus"]
+df_agg = (
+    df.groupby(["month", "view_type", "ods_code", "org_name"], observed=True)[_count_cols]
+    .sum()
+    .reset_index()
+)
+df_agg["pct_28"] = df_agg["within_28"] / df_agg["total"]
+df_agg["month"] = pd.Categorical(df_agg["month"], categories=MONTH_ORDER, ordered=True)
 
 # ── HEADER ────────────────────────────────────────────────────────────────────
 st.markdown(
@@ -251,7 +251,7 @@ st.markdown(
 
 # ── NATIONAL AGGREGATES PER MONTH ─────────────────────────────────────────────
 nat = (
-    df.groupby("month", observed=True)
+    df_agg.groupby("month", observed=True)
     .agg(total=("total", "sum"), within_28=("within_28", "sum"))
     .reset_index()
 )
@@ -268,7 +268,7 @@ latest_total = int(latest_row["total"])
 latest_w28   = int(latest_row["within_28"])
 delta_pct    = (latest_pct - prev_row["pct_28"]) if prev_row is not None else None
 
-df_latest    = df[df["month"] == latest_month]
+df_latest    = df_agg[df_agg["month"] == latest_month]
 n_orgs       = df_latest["org_name"].nunique()
 n_meeting    = df_latest[df_latest["pct_28"] >= FDS_TARGET]["org_name"].nunique()
 
@@ -396,7 +396,7 @@ with right:
 
 selected_month = str(latest_month)
 df_sel = (
-    df[df["month"].astype(str) == selected_month]
+    df_agg[df_agg["month"].astype(str) == selected_month]
     .dropna(subset=["pct_28", "total"])
     .query("total > 0")
     .copy()
@@ -408,46 +408,90 @@ df_sel = df_sel.sort_values("pct_28", ascending=True)
 st.divider()
 st.markdown(f"#### {org_label} Trend Over Time")
 
-all_orgs = sorted(df["org_name"].dropna().unique())
+# Route display names and raw values as they appear in the data
+ROUTE_STYLES = {
+    "Combined":                     {"raw": None,                           "dash": "solid"},
+    "Urgent Suspected Cancer":      {"raw": "URGENT SUSPECTED CANCER",      "dash": "dash"},
+    "National Screening Programme": {"raw": "NATIONAL SCREENING PROGRAMME", "dash": "dot"},
+}
 
-selected_orgs = st.multiselect(
-    f"Select {org_label.lower()}s to compare",
-    options=all_orgs,
-    default=[],
-    help="Choose one or more organisations to plot their 28-day FDS % over time.",
+# National aggregates by route (for route-level national lines)
+nat_by_route = (
+    df.groupby(["month", "referral_route"], observed=True)
+    .agg(total=("total", "sum"), within_28=("within_28", "sum"))
+    .reset_index()
 )
+nat_by_route["pct_28"] = nat_by_route["within_28"] / nat_by_route["total"]
+nat_by_route["month"] = pd.Categorical(nat_by_route["month"], categories=MONTH_ORDER, ordered=True)
+nat_by_route = nat_by_route.sort_values("month")
+
+col_orgs, col_routes = st.columns([3, 1])
+with col_orgs:
+    all_orgs = sorted(df_agg["org_name"].dropna().unique())
+    selected_orgs = st.multiselect(
+        f"Select {org_label.lower()}s to compare",
+        options=all_orgs,
+        default=[],
+        help="Choose one or more organisations to plot their 28-day FDS % over time.",
+    )
+with col_routes:
+    selected_routes = st.multiselect(
+        "Show by route",
+        options=list(ROUTE_STYLES.keys()),
+        default=["Combined"],
+        help="Break down by referral route. Line style: solid = Combined, dashed = USC, dotted = NSP.",
+    )
+
+if not selected_routes:
+    selected_routes = ["Combined"]
+
+# Plotly colour sequence for selected orgs
+org_colors = px.colors.qualitative.Plotly
 
 fig_drill = go.Figure()
+multi_route = len(selected_routes) > 1
 
-# Always show the national trend
-fig_drill.add_trace(
-    go.Scatter(
-        x=nat["month"].astype(str),
-        y=nat["pct_28"],
+for route_name in selected_routes:
+    style = ROUTE_STYLES[route_name]
+    route_suffix = f" — {route_name}" if multi_route else ""
+
+    # National line for this route
+    if route_name == "Combined":
+        x_nat, y_nat = nat["month"].astype(str), nat["pct_28"]
+    else:
+        rd = nat_by_route[nat_by_route["referral_route"] == style["raw"]]
+        x_nat, y_nat = rd["month"].astype(str), rd["pct_28"]
+
+    fig_drill.add_trace(go.Scatter(
+        x=x_nat, y=y_nat,
         mode="lines+markers",
-        name="National (England)",
-        line=dict(color=C_BLUE, width=3),
+        name=f"National (England){route_suffix}",
+        line=dict(color=C_BLUE, width=3, dash=style["dash"]),
         marker=dict(size=8, color=C_BLUE, line=dict(color="white", width=2)),
-        hovertemplate="<b>National (England)</b><br>%{x}: %{y:.1%}<extra></extra>",
-    )
-)
+        hovertemplate=f"<b>National (England){route_suffix}</b><br>%{{x}}: %{{y:.1%}}<extra></extra>",
+    ))
 
-# Add any selected organisations
-if selected_orgs:
-    df_drill = df[df["org_name"].isin(selected_orgs)].copy()
-    for org in selected_orgs:
-        org_data = df_drill[df_drill["org_name"] == org].sort_values("month")
+    # One line per selected org for this route
+    for i, org in enumerate(selected_orgs):
+        color = org_colors[i % len(org_colors)]
+        if route_name == "Combined":
+            org_data = df_agg[df_agg["org_name"] == org].sort_values("month")
+        else:
+            org_data = (
+                df[(df["org_name"] == org) & (df["referral_route"] == style["raw"])]
+                .sort_values("month")
+            )
         if org_data.empty:
             continue
-        fig_drill.add_trace(
-            go.Scatter(
-                x=org_data["month"].astype(str),
-                y=org_data["pct_28"],
-                mode="lines+markers",
-                name=org,
-                hovertemplate=f"<b>{org}</b><br>%{{x}}: %{{y:.1%}}<extra></extra>",
-            )
-        )
+        fig_drill.add_trace(go.Scatter(
+            x=org_data["month"].astype(str),
+            y=org_data["pct_28"],
+            mode="lines+markers",
+            name=f"{org}{route_suffix}",
+            line=dict(color=color, width=2, dash=style["dash"]),
+            marker=dict(size=7, color=color),
+            hovertemplate=f"<b>{org}{route_suffix}</b><br>%{{x}}: %{{y:.1%}}<extra></extra>",
+        ))
 
 fig_drill.add_hline(
     y=FDS_TARGET,
@@ -459,13 +503,13 @@ fig_drill.add_hline(
     annotation_font_color=C_RED,
 )
 fig_drill.update_layout(
-    height=380,
+    height=400,
     plot_bgcolor="white",
     paper_bgcolor="white",
     margin=dict(l=10, r=20, t=10, b=10),
     yaxis=dict(tickformat=".0%", range=[0, 1.05], gridcolor=C_LIGHT_GREY, title=None),
     xaxis=dict(gridcolor=C_LIGHT_GREY, title=None),
-    legend=dict(orientation="h", y=-0.2, font=dict(size=10)),
+    legend=dict(orientation="h", y=-0.25, font=dict(size=10)),
 )
 st.plotly_chart(fig_drill, use_container_width=True)
 
