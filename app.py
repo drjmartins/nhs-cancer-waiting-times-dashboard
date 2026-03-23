@@ -509,111 +509,178 @@ st.plotly_chart(fig_drill, use_container_width=True)
 # ── WAITING TIME BREAKDOWN ─────────────────────────────────────────────────────
 st.divider()
 
-month_options = [m for m in MONTH_ORDER if m in df_agg["month"].astype(str).values]
-selected_month = st.select_slider(
-    "Select month",
-    options=month_options,
-    value=month_options[-1],
-    key="breakdown_month_slider",
-)
+# ── INDIVIDUAL PROVIDER / COMMISSIONER ANALYSIS ───────────────────────────────
+all_orgs_individual = sorted(df_agg["org_name"].dropna().unique())
+sel_col, month_col = st.columns([3, 1])
 
-df_sel = (
-    df_agg[df_agg["month"].astype(str) == selected_month]
-    .dropna(subset=["pct_28", "total"])
-    .query("total > 0")
-    .copy()
-)
-df_sel = df_sel.sort_values("pct_28", ascending=True)
+with sel_col:
+    selected_org = st.selectbox(
+        f"Select {org_label.lower()}",
+        options=all_orgs_individual,
+        index=0,
+    )
+with month_col:
+    month_options = [m for m in MONTH_ORDER if m in df_agg["month"].astype(str).values]
+    selected_month = st.select_slider(
+        "Select month",
+        options=month_options,
+        value=month_options[-1],
+        key="org_month_slider",
+    )
 
-st.markdown(f"#### Waiting Time Breakdown — {selected_month} ({view})")
-st.caption(
-    "Stacked bars show how long patients waited. "
-    "Within 14 days and 15–28 days (blue shades) both contribute to meeting the 28-day target."
-)
+# Data for selected org (all months) and selected month
+df_org_all  = df_agg[df_agg["org_name"] == selected_org].sort_values("month")
+df_org_month = df_org_all[df_org_all["month"].astype(str) == selected_month]
+df_nat_month = nat[nat["month"].astype(str) == selected_month]
 
-df_breakdown = (
-    df_sel.dropna(subset=["w14", "d15_28", "d29_42", "d43_62", "d63plus"], how="all")
-    .sort_values("total", ascending=False)
-)
+org_has_data = not df_org_month.empty and df_org_month["total"].iloc[0] > 0
 
-breakdown_bands = {
-    "≤ 14 days":   ("w14",    C_DARK_BLUE),
-    "15–28 days":  ("d15_28", C_BLUE),
-    "29–42 days":  ("d29_42", C_YELLOW),
-    "43–62 days":  ("d43_62", "#FF6B35"),
-    "> 62 days":   ("d63plus", C_RED),
-}
+st.markdown(f"#### {selected_org} — {selected_month}")
 
-fig_bd = go.Figure()
-for label, (col, color) in breakdown_bands.items():
-    if col in df_breakdown.columns:
-        fig_bd.add_trace(
-            go.Bar(
-                name=label,
-                x=df_breakdown["org_name"],
-                y=df_breakdown[col],
-                marker_color=color,
-                hovertemplate=f"<b>%{{x}}</b><br>{label}: %{{y:,}}<extra></extra>",
-            )
+# ── KPI cards for selected org vs national ────────────────────────────────────
+if org_has_data:
+    o = df_org_month.iloc[0]
+    n_row = df_nat_month.iloc[0] if not df_nat_month.empty else None
+
+    org_pct   = o["pct_28"]
+    nat_pct   = n_row["pct_28"] if n_row is not None else None
+    diff      = (org_pct - nat_pct) if nat_pct is not None else None
+
+    ka, kb, kc, kd = st.columns(4)
+    ka.markdown(
+        kpi_card("28-Day FDS %", f"{org_pct:.1%}", delta=diff, good_up=True),
+        unsafe_allow_html=True,
+    )
+    kb.markdown(
+        kpi_card("Total patients", f"{int(o['total']):,}"),
+        unsafe_allow_html=True,
+    )
+    kc.markdown(
+        kpi_card("Within 28 days", f"{int(o['within_28']):,}"),
+        unsafe_allow_html=True,
+    )
+    kd.markdown(
+        kpi_card("After 28 days", f"{int(o['after_28']):,}"),
+        unsafe_allow_html=True,
+    )
+    if diff is not None:
+        st.caption(f"Delta shown vs national average ({nat_pct:.1%}) for {selected_month}.")
+else:
+    st.info(f"No data available for {selected_org} in {selected_month}.")
+
+st.markdown("<br>", unsafe_allow_html=True)
+
+# ── Trend + waiting time breakdown side by side ───────────────────────────────
+left_org, right_org = st.columns(2)
+
+with left_org:
+    st.markdown("**12-Month Trend vs National**")
+
+    fig_org_trend = go.Figure()
+    fig_org_trend.add_trace(go.Scatter(
+        x=df_org_all["month"].astype(str),
+        y=df_org_all["pct_28"],
+        mode="lines+markers",
+        name=selected_org,
+        line=dict(color=C_BLUE, width=2),
+        marker=dict(size=7, color=C_BLUE),
+        hovertemplate="%{x}: %{y:.1%}<extra>" + selected_org + "</extra>",
+    ))
+    fig_org_trend.add_trace(go.Scatter(
+        x=nat["month"].astype(str),
+        y=nat["pct_28"],
+        mode="lines+markers",
+        name="National (England)",
+        line=dict(color=C_GREY, width=2, dash="dash"),
+        marker=dict(size=6, color=C_GREY),
+        hovertemplate="%{x}: %{y:.1%}<extra>National</extra>",
+    ))
+    fig_org_trend.add_hline(
+        y=FDS_TARGET, line_dash="dash", line_color=C_RED, line_width=1.5,
+        annotation_text="75% Target", annotation_position="top left",
+        annotation_font_color=C_RED,
+    )
+    fig_org_trend.update_layout(
+        height=320,
+        plot_bgcolor="white", paper_bgcolor="white",
+        margin=dict(l=10, r=10, t=10, b=10),
+        yaxis=dict(tickformat=".0%", range=[0, 1.05], gridcolor=C_LIGHT_GREY, title=None),
+        xaxis=dict(gridcolor=C_LIGHT_GREY, title=None),
+        legend=dict(orientation="h", y=-0.2, font=dict(size=10)),
+    )
+    st.plotly_chart(fig_org_trend, use_container_width=True)
+
+with right_org:
+    st.markdown(f"**Waiting Time Breakdown — {selected_month}**")
+
+    breakdown_bands = [
+        ("w14",    "≤ 14 days",  C_DARK_BLUE),
+        ("d15_28", "15–28 days", C_BLUE),
+        ("d29_42", "29–42 days", C_YELLOW),
+        ("d43_62", "43–62 days", "#FF6B35"),
+        ("d63plus", "> 62 days", C_RED),
+    ]
+
+    if org_has_data:
+        o = df_org_month.iloc[0]
+        bd_values = [o.get(col, 0) or 0 for col, _, _ in breakdown_bands]
+        bd_labels = [lbl for _, lbl, _ in breakdown_bands]
+        bd_colors = [col for _, _, col in breakdown_bands]
+
+        fig_donut = go.Figure(go.Pie(
+            labels=bd_labels,
+            values=bd_values,
+            hole=0.45,
+            marker=dict(colors=bd_colors),
+            textinfo="label+percent",
+            hovertemplate="<b>%{label}</b><br>%{value:,} patients (%{percent})<extra></extra>",
+            sort=False,
+        ))
+        fig_donut.update_layout(
+            height=320,
+            margin=dict(l=10, r=10, t=10, b=10),
+            paper_bgcolor="white",
+            showlegend=False,
         )
+        st.plotly_chart(fig_donut, use_container_width=True)
+    else:
+        st.info("No breakdown data available for this selection.")
 
-fig_bd.update_layout(
-    barmode="stack",
-    height=420,
-    plot_bgcolor="white",
-    paper_bgcolor="white",
-    margin=dict(l=10, r=10, t=10, b=10),
-    xaxis=dict(showticklabels=False, title=None),
-    yaxis=dict(title="Patients", gridcolor=C_LIGHT_GREY),
-    legend=dict(
-        orientation="h",
-        y=1.06,
-        font=dict(size=11),
-        traceorder="normal",
-    ),
-)
-st.plotly_chart(fig_bd, use_container_width=True)
+# ── Month-by-month detail table ───────────────────────────────────────────────
+st.markdown(f"**Month-by-month detail — {selected_org}**")
 
-
-# ── DATA TABLE ────────────────────────────────────────────────────────────────
-st.divider()
-st.markdown(f"#### Full Data Table — {selected_month} ({view})")
-
-table = df_sel[
-    ["ods_code", "org_name", "total", "within_28", "after_28",
-     "pct_28", "w14", "d15_28", "d29_42", "d43_62", "d63plus"]
+detail = df_org_all[
+    ["month", "total", "within_28", "after_28", "pct_28",
+     "w14", "d15_28", "d29_42", "d43_62", "d63plus"]
 ].copy()
-
-table.columns = [
-    "ODS Code", org_label, "Total", "Within 28d", "After 28d",
-    "% within 28d", "≤14d", "15–28d", "29–42d", "43–62d", ">62d",
+detail.columns = [
+    "Month", "Total", "Within 28d", "After 28d", "% within 28d",
+    "≤14d", "15–28d", "29–42d", "43–62d", ">62d",
 ]
-table = table.sort_values("% within 28d", ascending=False).reset_index(drop=True)
-table["% within 28d"] = table["% within 28d"].apply(
+detail["% within 28d"] = detail["% within 28d"].apply(
     lambda x: f"{x:.1%}" if pd.notna(x) else "—"
 )
+detail["Month"] = detail["Month"].astype(str)
 
-# Highlight rows below target (light red background)
 def highlight_below_target(row):
-    pct_str = row["% within 28d"]
     try:
-        val = float(pct_str.replace("%", "")) / 100
+        val = float(row["% within 28d"].replace("%", "")) / 100
         color = "#fde8e8" if val < FDS_TARGET else ""
     except Exception:
         color = ""
     return [f"background-color: {color}"] * len(row)
 
 st.dataframe(
-    table.style.apply(highlight_below_target, axis=1),
+    detail.style.apply(highlight_below_target, axis=1),
     use_container_width=True,
     hide_index=True,
 )
 
-csv_bytes = table.to_csv(index=False).encode("utf-8")
+csv_bytes = detail.to_csv(index=False).encode("utf-8")
 st.download_button(
-    label="⬇  Download table as CSV",
+    label="⬇  Download as CSV",
     data=csv_bytes,
-    file_name=f"NHS_CRC_28day_FDS_{view}_{selected_month}.csv",
+    file_name=f"NHS_CRC_28day_FDS_{view}_{selected_org.replace(' ', '_')}.csv",
     mime="text/csv",
 )
 
