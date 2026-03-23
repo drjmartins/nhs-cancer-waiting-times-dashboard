@@ -683,7 +683,9 @@ detail = pd.concat([
     _fmt(df_org_usc,  "Urgent Suspected Cancer"),
     _fmt(df_org_nsp,  "National Screening Programme"),
 ], ignore_index=True)
+detail["Month"] = pd.Categorical(detail["Month"], categories=MONTH_ORDER, ordered=True)
 detail = detail.sort_values(["Month", "Route"]).reset_index(drop=True)
+detail["Month"] = detail["Month"].astype(str)
 
 def highlight_below_target(row):
     try:
