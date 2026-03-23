@@ -418,9 +418,21 @@ with hist_ctrl:
         value=hist_month_options[-1],
         key="hist_month_slider",
     )
+    hist_route = st.radio(
+        "Route",
+        options=["Combined", "Urgent Suspected Cancer", "National Screening Programme"],
+        index=0,
+        key="hist_route_radio",
+    )
+
+HIST_ROUTE_MAP = {
+    "Combined":                     df_agg,
+    "Urgent Suspected Cancer":      df[df["referral_route"] == "URGENT SUSPECTED CANCER"],
+    "National Screening Programme": df[df["referral_route"] == "NATIONAL SCREENING PROGRAMME"],
+}
 
 df_hist = (
-    df_agg[df_agg["month"].astype(str) == hist_month]
+    HIST_ROUTE_MAP[hist_route][lambda d: d["month"].astype(str) == hist_month]
     .dropna(subset=["pct_28"])
     .query("total > 0")
 )
