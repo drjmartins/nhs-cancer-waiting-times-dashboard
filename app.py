@@ -670,12 +670,21 @@ _detail_cols = ["month", "total", "within_28", "after_28", "pct_28",
 _col_names   = ["Month", "Total", "Within 28d", "After 28d", "% within 28d",
                 "≤14d", "15–28d", "29–42d", "43–62d", ">62d"]
 
+_count_cols_detail = ["total", "within_28", "after_28", "w14", "d15_28", "d29_42", "d43_62", "d63plus"]
+_all_months_df = pd.DataFrame({"month": MONTH_ORDER})
+
 def _fmt(df_in, route_label):
-    d = df_in[_detail_cols].copy()
+    # Merge against all months so every month appears, filling gaps with 0
+    base = df_in[_detail_cols].copy() if not df_in.empty else pd.DataFrame(columns=_detail_cols)
+    base["month"] = base["month"].astype(str)
+    d = _all_months_df.merge(base, on="month", how="left")
+    for col in _count_cols_detail:
+        d[col] = d[col].fillna(0).astype(int)
+    # Recalculate % from filled counts
+    d["pct_28"] = (d["within_28"] / d["total"]).where(d["total"] > 0, 0)
     d.columns = _col_names
     d.insert(1, "Route", route_label)
-    d["% within 28d"] = d["% within 28d"].apply(lambda x: f"{x:.1%}" if pd.notna(x) else "—")
-    d["Month"] = d["Month"].astype(str)
+    d["% within 28d"] = d["% within 28d"].apply(lambda x: f"{x:.1%}")
     return d
 
 detail = pd.concat([
