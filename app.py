@@ -384,9 +384,8 @@ with right:
     st.plotly_chart(fig_vol, use_container_width=True)
 
 
-# ── PERFORMANCE LEAGUE TABLE (BAR CHART) ──────────────────────────────────────
+# ── MONTH SELECTOR (used by breakdown + data table) ───────────────────────────
 st.divider()
-st.markdown(f"#### {org_label} Performance — CRC 28-Day FDS")
 
 month_options = [m for m in MONTH_ORDER if m in df["month"].astype(str).values]
 selected_month = st.select_slider(
@@ -403,56 +402,6 @@ df_sel = (
     .copy()
 )
 df_sel = df_sel.sort_values("pct_28", ascending=True)
-df_sel["meets_target"] = df_sel["pct_28"].apply(
-    lambda x: "Meets target (≥75%)" if x >= FDS_TARGET else "Below target (<75%)"
-)
-
-fig_league = px.bar(
-    df_sel,
-    x="pct_28",
-    y="org_name",
-    orientation="h",
-    color="meets_target",
-    color_discrete_map={
-        "Meets target (≥75%)": C_GREEN,
-        "Below target (<75%)": C_RED,
-    },
-    custom_data=["total", "within_28", "after_28"],
-    labels={
-        "pct_28": "% within 28 days",
-        "org_name": org_label,
-        "meets_target": "",
-    },
-    height=max(500, len(df_sel) * 22),
-)
-fig_league.update_traces(
-    hovertemplate=(
-        "<b>%{y}</b><br>"
-        "%{x:.1%} within 28 days<br>"
-        "Total: %{customdata[0]:,}<br>"
-        "Within 28d: %{customdata[1]:,}<br>"
-        "After 28d: %{customdata[2]:,}"
-        "<extra></extra>"
-    )
-)
-fig_league.add_vline(
-    x=FDS_TARGET,
-    line_dash="dash",
-    line_color=C_RED,
-    line_width=2,
-    annotation_text="75% Target",
-    annotation_position="top right",
-    annotation_font_color=C_RED,
-)
-fig_league.update_layout(
-    plot_bgcolor="white",
-    paper_bgcolor="white",
-    margin=dict(l=10, r=20, t=10, b=10),
-    xaxis=dict(tickformat=".0%", range=[0, 1.05], gridcolor=C_LIGHT_GREY, title=None),
-    yaxis=dict(tickfont=dict(size=10), title=None),
-    legend=dict(orientation="h", y=-0.03, font=dict(size=11)),
-)
-st.plotly_chart(fig_league, use_container_width=True)
 
 
 # ── PROVIDER TREND DRILL-DOWN ─────────────────────────────────────────────────
